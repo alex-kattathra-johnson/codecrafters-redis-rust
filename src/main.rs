@@ -1,23 +1,28 @@
-use std::{io::{Read, Write}, net::TcpListener};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+};
 
-fn main() {
+#[tokio::main]
+async fn main() {
     // You can use print statements as follows for debugging, they'll be visible when running tests.
     println!("Logs from your program will appear here!");
 
-    
-
-    let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
-    
-    for stream in listener.incoming() {
+    let listener = TcpListener::bind("127.0.0.1:6379").await.unwrap();
+    loop {
+        let stream = listener.accept().await;
         match stream {
-            Ok(mut stream) => {
-                let mut buf = [0; 512];
-                loop {
-                    if stream.read(&mut buf).unwrap() == 0 {
-                        break
+            Ok((mut stream, _)) => {
+                println!("accepted new connection");
+                tokio::spawn(async move {
+                    loop {
+                        let mut buf = [0; 512];
+                        if stream.read(&mut buf).await.unwrap() == 0 {
+                            break;
+                        }
+                        stream.write(b"+PONG\r\n").await.unwrap();
                     }
-                    stream.write(b"+PONG\r\n").unwrap();
-                }
+                });
             }
             Err(e) => {
                 println!("error: {}", e);
