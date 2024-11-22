@@ -57,7 +57,7 @@ fn extract_command(value: Value) -> Result<(String, Vec<Value>)> {
     match value {
         Value::Array(a) => {
             Ok((
-                unpack_bulk_str(a.first().unwrap().clone())?,
+                unpack_bulk_str(a.first().unwrap().clone())?.to_lowercase(),
                 a.into_iter().skip(1).collect(),
             ))
         },
