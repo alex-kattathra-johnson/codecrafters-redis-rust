@@ -7,13 +7,14 @@ pub enum Value {
     SimpleString(String),
     BulkString(String),
     Array(Vec<Value>),
+    Null
 }
 
 impl Value {
     pub fn serialize(self) -> String {
         match self {
             Value::SimpleString(s) => format!("+{}\r\n", s),
-            Value::BulkString(s) => format!("${}\r\n{}\r\n", s.chars().count(), s),
+            Value::BulkString(s) => format!("${}\r\n{}\r\n", s.bytes().len(), s),
             _ => panic!("Unsupported value for serialize"),
         }
     }
