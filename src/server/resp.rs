@@ -1,21 +1,49 @@
-use bytes::BytesMut;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::TcpStream};
 use anyhow::Result;
+use bytes::BytesMut;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpStream,
+};
 
 #[derive(Clone, Debug)]
 pub enum Value {
     SimpleString(String),
     BulkString(String),
     Array(Vec<Value>),
-    Null
+    Null,
 }
 
 impl Value {
-    pub fn serialize(self) -> String {
+    pub fn serialize(&self) -> String {
         match self {
             Value::SimpleString(s) => format!("+{}\r\n", s),
             Value::BulkString(s) => format!("${}\r\n{}\r\n", s.bytes().len(), s),
-            _ => panic!("Unsupported value for serialize"),
+            Value::Array(vec) => format!(
+                "*{}\r\n{}",
+                vec.len(),
+                vec.iter()
+                    .map(|v| v.serialize())
+                    .collect::<Vec<String>>()
+                    .join("\r\n")
+            ),
+            Value::Null => String::from("$-1\r\n"),
+        }
+    }
+
+    pub fn extract_command(self) -> Result<(String, Vec<Value>)> {
+        match self {
+            Value::Array(a) => Ok((
+                a.first().unwrap().unpack_bulk_str()?.to_lowercase(),
+                a.into_iter().skip(1).collect(),
+            )),
+            _ => Err(anyhow::anyhow!("Unexpected command format")),
+        }
+    }
+
+    pub fn unpack_bulk_str(&self) -> Result<String> {
+        match self {
+            Value::BulkString(s) => Ok(s.clone()),
+            _ => Err(anyhow::anyhow!("Expected command to be a bulk string")),
         }
     }
 }
@@ -61,25 +89,26 @@ fn parse_message(buffer: BytesMut) -> Result<(Value, usize)> {
 fn parse_simple_string(buffer: BytesMut) -> Result<(Value, usize)> {
     if let Some((line, len)) = read_until_crlf(&buffer[1..]) {
         let string = String::from_utf8(line.to_vec()).unwrap();
-        return Ok((Value::SimpleString(string), len + 1))
+        return Ok((Value::SimpleString(string), len + 1));
     }
     return Err(anyhow::anyhow!("Invalid string {:?}", buffer));
 }
 
 fn parse_array(buffer: BytesMut) -> Result<(Value, usize)> {
-    let (array_length, mut bytes_consumed) = if let Some((line, len)) = read_until_crlf(&buffer[1..]) {
-        let array_length = parse_int(line)?;
-        (array_length, len + 1)
-    } else {
-        return Err(anyhow::anyhow!("Invalid array format {:?}", buffer));
-    };
+    let (array_length, mut bytes_consumed) =
+        if let Some((line, len)) = read_until_crlf(&buffer[1..]) {
+            let array_length = parse_int(line)?;
+            (array_length, len + 1)
+        } else {
+            return Err(anyhow::anyhow!("Invalid array format {:?}", buffer));
+        };
     let mut items = vec![];
     for _ in 0..array_length {
         let (array_item, len) = parse_message(BytesMut::from(&buffer[bytes_consumed..]))?;
         items.push(array_item);
         bytes_consumed += len;
     }
-    return Ok((Value::Array(items), bytes_consumed))
+    return Ok((Value::Array(items), bytes_consumed));
 }
 
 fn parse_bulk_string(buffer: BytesMut) -> Result<(Value, usize)> {
@@ -91,7 +120,12 @@ fn parse_bulk_string(buffer: BytesMut) -> Result<(Value, usize)> {
     };
     let end_of_bulk_str = bytes_consumed + bulk_str_len as usize;
     let total_parsed = end_of_bulk_str + 2;
-    Ok((Value::BulkString(String::from_utf8(buffer[bytes_consumed..end_of_bulk_str].to_vec())?), total_parsed))
+    Ok((
+        Value::BulkString(String::from_utf8(
+            buffer[bytes_consumed..end_of_bulk_str].to_vec(),
+        )?),
+        total_parsed,
+    ))
 }
 
 fn read_until_crlf(buffer: &[u8]) -> Option<(&[u8], usize)> {
